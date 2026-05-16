@@ -27,8 +27,15 @@ if [ "$EXT" = "deb" ]; then
     if [ -f data.tar* ]; then 
         tar -xf data.tar* && rm data.tar*
     fi
+    # Нормализация путей: рекурсивно заменяем пробелы на подчеркивания
+    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 else
-    bsdtar --strip-components=1 -xf "$FILE" 2>/dev/null || tar --strip-components=1 -xf "$FILE" 2>/dev/null || tar -xf "$FILE"
+    mkdir -p tmp_extract
+    bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
+    mv tmp_extract/*/* . 2>/dev/null || mv tmp_extract/* . 2>/dev/null
+    rm -rf tmp_extract
+    # Нормализация путей для tar-архивов
+    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 fi
 
 BIN_FILE=$(find . -maxdepth 1 -type f -executable -iname "$APP_NAME" | head -n 1)
@@ -36,7 +43,8 @@ if [ -z "$BIN_FILE" ]; then
     BIN_FILE=$(find . -type f -executable -iname "$APP_NAME" | grep -v -E "bootstrap|crashpad|sandbox" | head -n 1)
 fi
 if [ -z "$BIN_FILE" ]; then
-    BIN_FILE=$(find ./usr/bin ./opt -type f -executable 2>/dev/null | head -n 1)
+    # Ищем бинарник во внутренних каталогах, включая переименованные (без пробелов)
+    BIN_FILE=$(find ./usr/bin ./opt ./usr/share -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox" | head -n 1)
 fi
 
 if [ -z "$BIN_FILE" ]; then
@@ -78,7 +86,7 @@ if [ -f "$DESKTOP_FILE" ]; then
     
     sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
     
-    ICON_PATH=$(find . -name "${APP_NAME}.png" -o -name "google-chrome.png" -o -name "discord.png" -o -name "icon.png" | head -n 1)
+    ICON_PATH=$(find . -name "${APP_NAME}.png" -o -name "google-chrome.png" -o -name "discord.png" -o -name "icon.png" -o -name "*.png" | head -n 1)
     if [ -n "$ICON_PATH" ]; then
         CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
         sed -i "s@^Icon=.*@Icon=$FINAL_APPS_DIR/$APP_NAME/$CLEAN_ICON_PATH@" "$LOCAL_DESKTOP"
