@@ -6,11 +6,9 @@
 
 ## Как скачать и установить:
 
-Откройте терминал и выполните следующие команды:
+Откройте терминал и выполните следующую команду:
 
-'''git clone https://github.com/d33m11urge/linapp.git
-cd linapp
-chmod +x install.sh && ./install.sh'''
+git clone https://github.com/d33m11urge/linapp.git && cd linapp && chmod +x install.sh && ./install.sh
 
 ## Гайд по использованию:
 
