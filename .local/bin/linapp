@@ -29,7 +29,7 @@ if [ "$EXT" = "deb" ]; then
     fi
 else
     mkdir -p tmp_extract
-    tar -xf "$FILE" -C tmp_extract/
+    bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
     mv tmp_extract/*/* . 2>/dev/null || mv tmp_extract/* . 2>/dev/null
     rm -rf tmp_extract
 fi
@@ -101,8 +101,7 @@ EOF
 chmod +x "$EJECT_SCRIPT"
 
 mv "$TMP_BUILD" "$DMG_VOLUME/${APP_NAME}"
-ln -s "$FINAL_APPS_DIR" "$DMG_VOLUME/Applications"
+ln -s "$FINAL_APPS_DIR" "$VOL/Applications"
 
 notify-send "linapp" "Build complete. Drag the app to Applications." --icon=dialog-information
 dolphin "$DMG_VOLUME" &
-
