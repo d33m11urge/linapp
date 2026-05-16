@@ -1,0 +1,63 @@
+#!/bin/bash
+set -e
+
+[ -z "$1" ] && { notify-send "linapp" "Error: Target file required." --icon=error; exit 1; }
+
+ARCHIVE=$(realpath "$1")
+NAME=$(basename "$ARCHIVE" | cut -d'-' -f1 | cut -d'_' -f1 | tr '[:upper:]' '[:lower:]')
+VOL="/tmp/${NAME}-Installer"
+
+rm -rf "$VOL" && mkdir -p "$VOL/${NAME}"
+cd "$VOL/${NAME}"
+
+notify-send "linapp" "Mounting ${NAME}..." --icon=package-x-generic
+
+if [ "${ARCHIVE##*.}" = "deb" ]; then
+    bsdtar -xf "$ARCHIVE" 2>/dev/null
+    [ -f data.tar* ] && tar -xf data.tar* && rm data.tar*
+else
+    tar -xf "$ARCHIVE" --strip-components=1 2>/dev/null || tar -xf "$ARCHIVE"
+fi
+
+BIN=$(find . -maxdepth 1 -type f -executable -iname "$NAME" | head -n 1)
+[ -z "$BIN" ] && BIN=$(find . -type f -executable -iname "$NAME" | grep -v -E "bootstrap|sandbox" | head -n 1)
+[ -z "$BIN" ] && BIN=$(find ./usr/bin ./opt -type f -executable 2>/dev/null | head -n 1)
+[ -z "$BIN" ] && { notify-send "linapp" "Error: Binary not found." --icon=error; exit 1; }
+
+BIN_CLEAN=$(echo "$BIN" | sed 's|^\./||')
+
+cat <<EOF > AppRun
+#!/bin/bash
+R="\$(dirname "\$(readlink -f "\$0")")"
+B="\$(dirname "$BIN_CLEAN")"
+export LD_LIBRARY_PATH="\$R/\$B:\$R/usr/lib:\$R/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
+export XDG_DATA_DIRS="\$R/usr/share:\$XDG_DATA_DIRS"
+exec "\$R/$BIN_CLEAN" "\$@"
+EOF
+chmod +x AppRun
+
+find . -name "*url_handler.desktop" -delete 2>/dev/null || true
+DESK=$(find . -name "*.desktop" | head -n 1)
+
+if [ -f "$DESK" ]; then
+    [ "$(realpath "$DESK")" != "$(realpath "${NAME}.desktop")" ] && cp "$DESK" "${NAME}.desktop"
+    sed -i "s@^Exec=.*@Exec=\$HOME/Applications/$NAME/AppRun %U@" "${NAME}.desktop"
+    
+    IMG=$(find . -name "${NAME}.png" -o -name "google-chrome.png" -o -name "discord.png" -o -name "icon.png" | head -n 1 | sed 's|^\./||')
+    [ -n "$IMG" ] && sed -i "s@^Icon=.*@Icon=\$HOME/Applications/$NAME/$IMG@" "${NAME}.desktop"
+    
+    ln -sf "\$HOME/Applications/$NAME/${NAME}.desktop" "\$HOME/.local/share/applications/${NAME}.desktop"
+fi
+
+cat <<EOF > "$VOL/Eject_Installer.sh"
+#!/bin/bash
+pkill -f "dolphin $VOL" || true
+rm -rf "$VOL"
+update-desktop-database "\$HOME/.local/share/applications" 2>/dev/null || true
+kbuildsycoca6 2>/dev/null || kbuildsycoca5 2>/dev/null || true
+EOF
+chmod +x "$VOL/Eject_Installer.sh"
+
+ln -s "\$HOME/Applications" "$VOL/Applications"
+notify-send "linapp" "Ready to install." --icon=dialog-information
+dolphin "$VOL" &
