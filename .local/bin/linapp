@@ -98,7 +98,6 @@ EOF
 chmod +x "$EJECT_SCRIPT"
 
 mv "$TMP_BUILD" "$DMG_VOLUME/${APP_NAME}"
-# ИСПРАВЛЕНО: Теперь ссылка создается строго в корне инсталлятора ($DMG_VOLUME)
 ln -sf "$FINAL_APPS_DIR" "$DMG_VOLUME/Applications"
 
 notify-send "linapp" "Build complete. Drag the app to Applications." --icon=dialog-information
