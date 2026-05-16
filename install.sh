@@ -23,7 +23,7 @@ cat <<EOF > "$APP/linapp-handler.desktop"
 Type=Application
 Name=Linapp Installer
 Exec=$BIN/linapp %f
-MimeType=application/vnd.debian.binary-package;application/gzip;application/x-compressed-tar;
+MimeType=application/vnd.debian.binary-package;application/gzip;application/x-compressed-tar;application/x-xz;application/x-pixman;
 Terminal=false
 Icon=system-run
 Categories=Utility;System;
