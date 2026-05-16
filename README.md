@@ -8,9 +8,9 @@
 
 Откройте терминал и выполните следующие команды:
 
-git clone https://github.com/d33m11urge/linapp.git
+'''git clone https://github.com/d33m11urge/linapp.git
 cd linapp
-chmod +x install.sh && ./install.sh
+chmod +x install.sh && ./install.sh'''
 
 ## Гайд по использованию:
 
