@@ -1,8 +1,8 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-if [ -z "$1" ]; then
+if [ -z "${1:-}" ]; then
     notify-send "linapp" "Error: No input file specified." --icon=error
     exit 1
 fi
@@ -22,79 +22,88 @@ cd "$TMP_BUILD"
 
 notify-send "linapp" "Processing ${APP_NAME}..." --icon=package-x-generic
 
+# Расшифровка пакета
 if [ "$EXT" = "deb" ]; then
     bsdtar -xf "$FILE" 2>/dev/null
     if [ -f data.tar* ]; then 
-        tar -xf data.tar* && rm data.tar*
+        tar -xf data.tar* && rm -f data.tar*
     fi
-    # Нормализация путей: рекурсивно заменяем пробелы на подчеркивания
-    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 else
     mkdir -p tmp_extract
     bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
     mv tmp_extract/*/* . 2>/dev/null || mv tmp_extract/* . 2>/dev/null
     rm -rf tmp_extract
-    # Нормализация путей для tar-архивов
-    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 fi
 
-BIN_FILE=$(find . -maxdepth 1 -type f -executable -iname "$APP_NAME" | head -n 1)
-if [ -z "$BIN_FILE" ]; then
-    BIN_FILE=$(find . -type f -executable -iname "$APP_NAME" | grep -v -E "bootstrap|crashpad|sandbox" | head -n 1)
-fi
-if [ -z "$BIN_FILE" ]; then
-    # Ищем бинарник во внутренних каталогах, включая переименованные (без пробелов)
-    BIN_FILE=$(find ./usr/bin ./opt ./usr/share -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox" | head -n 1)
-fi
+# Нормализация файловой структуры (очистка пробелов)
+find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 
-if [ -z "$BIN_FILE" ]; then
-    notify-send "linapp" "Error: Executable target not found." --icon=error
+# Четкий поиск официального ярлыка приложения
+DESKTOP_FILE=$(find . -name "*.desktop" ! -name "*url_handler.desktop" | head -n 1)
+
+if [ -z "$DESKTOP_FILE" ]; then
+    notify-send "linapp" "Error: Linux .desktop entry not found in package." --icon=error
     exit 1
 fi
 
-BIN_FILE_CLEAN=$(echo "$BIN_FILE" | sed 's|^\./||')
+# Извлекаем имя исполняемого файла из официального манифеста Exec=
+BIN_NAME=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2 | awk '{print $1}' | sed 's/"//g' | xargs basename)
 
+# Находим физическое расположение этого бинарника внутри папки
+BIN_PATH=$(find . -type f -executable -name "$BIN_NAME" | head -n 1)
+
+# Если это Java-приложение (.jar), у которого нет бинарника Linux
+if [ -z "$BIN_PATH" ]; then
+    BIN_PATH=$(find . -type f -name "*.jar" -iname "*${APP_NAME}*" | head -n 1)
+fi
+
+if [ -z "$BIN_PATH" ]; then
+    notify-send "linapp" "Error: Target executable [$BIN_NAME] not found." --icon=error
+    exit 1
+fi
+
+BIN_FILE_CLEAN=$(echo "$BIN_PATH" | sed 's|^\./||')
+BIN_DIR=$(dirname "$BIN_FILE_CLEAN")
+
+# Сборка предсказуемого AppRun (без ИИ-угадываний)
 cat <<EOF > "$TMP_BUILD/AppRun"
 #!/bin/bash
 HERE="\$(dirname "\$(readlink -f "\$0")")"
-BIN_DIR="\$(dirname "$BIN_FILE_CLEAN")"
 
-if [ "\$BIN_DIR" = "." ]; then
-    export LD_LIBRARY_PATH="\$HERE:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
-else
-    export LD_LIBRARY_PATH="\$HERE/\$BIN_DIR:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
-fi
-export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
+export LD_LIBRARY_PATH="\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$HERE/$BIN_DIR:\${LD_LIBRARY_PATH:-}"
+export XDG_DATA_DIRS="\$HERE/usr/share:\${XDG_DATA_DIRS:-}"
 
-exec "\$HERE/$BIN_FILE_CLEAN" "\$@"
 EOF
+
+if [[ "$BIN_FILE_CLEAN" == *.jar ]]; then
+    echo 'exec java -jar "$HERE/'"$BIN_FILE_CLEAN"'" "$@"' >> "$TMP_BUILD/AppRun"
+else
+    echo 'exec "$HERE/'"$BIN_FILE_CLEAN"'" "$@"' >> "$TMP_BUILD/AppRun"
+fi
 
 chmod +x "$TMP_BUILD/AppRun"
 
+# Интеграция в системное меню KDE Plasma
 LAUNCHER_DIR="$HOME/.local/share/applications"
 mkdir -p "$LAUNCHER_DIR"
 
-find . -name "*url_handler.desktop" -delete 2>/dev/null || true
-DESKTOP_FILE=$(find . -name "*.desktop" | head -n 1)
+LOCAL_DESKTOP="$TMP_BUILD/${APP_NAME}.desktop"
+cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
 
-if [ -f "$DESKTOP_FILE" ]; then
-    LOCAL_DESKTOP="$TMP_BUILD/${APP_NAME}.desktop"
-    
-    if [ "$(realpath "$DESKTOP_FILE")" != "$(realpath "$LOCAL_DESKTOP")" ]; then
-        cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
-    fi
-    
-    sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
-    
-    ICON_PATH=$(find . -name "${APP_NAME}.png" -o -name "google-chrome.png" -o -name "discord.png" -o -name "icon.png" -o -name "*.png" | head -n 1)
-    if [ -n "$ICON_PATH" ]; then
-        CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
-        sed -i "s@^Icon=.*@Icon=$FINAL_APPS_DIR/$APP_NAME/$CLEAN_ICON_PATH@" "$LOCAL_DESKTOP"
-    fi
-    
-    ln -sf "$FINAL_APPS_DIR/$APP_NAME/${APP_NAME}.desktop" "$LAUNCHER_DIR/${APP_NAME}.desktop"
+sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
+
+# Поиск иконки
+ICON_NAME=$(grep -E "^Icon=" "$LOCAL_DESKTOP" | head -n 1 | cut -d= -f2 || true)
+ICON_PATH=$(find . -name "${ICON_NAME}.png" -o -name "${APP_NAME}.png" -o -name "*.png" | head -n 1 || true)
+
+if [ -n "$ICON_PATH" ]; then
+    CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
+    sed -i "s@^Icon=.*@Icon=$FINAL_APPS_DIR/$APP_NAME/$CLEAN_ICON_PATH@" "$LOCAL_DESKTOP"
 fi
 
+ln -sf "$FINAL_APPS_DIR/$APP_NAME/${APP_NAME}.desktop" "$LAUNCHER_DIR/${APP_NAME}.desktop"
+
+# Скрипт размонтирования "установщика"
 EJECT_SCRIPT="$DMG_VOLUME/Eject_Installer.sh"
 cat <<EOF > "$EJECT_SCRIPT"
 #!/bin/bash
