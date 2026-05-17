@@ -75,40 +75,7 @@ else
 fi
 export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
 
-PERSISTENT_HOME="\$HOME/.local/share/linapp_sandbox/${APP_NAME}"
-mkdir -p "\$PERSISTENT_HOME"
-
-exec bwrap \\
-    --ro-bind /usr /usr \\
-    --ro-bind /lib /lib \\
-    --ro-bind /lib64 /lib64 \\
-    --ro-bind /bin /bin \\
-    --ro-bind /sbin /sbin \\
-    --ro-bind /etc /etc \\
-    --ro-bind /sys /sys \\
-    --ro-bind-try /sys/dev /sys/dev \\
-    --ro-bind-try /sys/devices /sys/devices \\
-    --ro-bind-try /usr/share/drirc.d /usr/share/drirc.d \\
-    --dev-bind /dev/dri /dev/dri \\
-    --dev /dev \\
-    --proc /proc \\
-    --tmpfs /tmp \\
-    --dir /run \\
-    --ro-bind-try /run/udev /run/udev \\
-    --ro-bind-try /run/systemd /run/systemd \\
-    --ro-bind-try /run/user/\$(id -u) /run/user/\$(id -u) \\
-    --bind "\$PERSISTENT_HOME" "\$HOME" \\
-    --bind "\$HERE" "\$HERE" \\
-    --chdir "\$HERE" \\
-    --setenv HOME "\$HOME" \\
-    --setenv DISPLAY "\$DISPLAY" \\
-    --setenv LD_LIBRARY_PATH "\$LD_LIBRARY_PATH" \\
-    --setenv XDG_DATA_DIRS "\$XDG_DATA_DIRS" \\
-    --setenv msa_vk_device_select "1002" \\
-    --ro-bind-try "\$XDG_RUNTIME_DIR/wayland-0" "\$XDG_RUNTIME_DIR/wayland-0" \\
-    --ro-bind-try "/tmp/.X11-unix" "/tmp/.X11-unix" \\
-    --ro-bind-try "/etc/resolv.conf" "/etc/resolv.conf" \\
-    ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$@"
+exec ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$@"
 EOF
 
 chmod +x "$TMP_BUILD/AppRun"
