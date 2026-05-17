@@ -64,20 +64,6 @@ fi
 BIN_FILE_CLEAN=$(echo "$BIN_FILE" | sed 's|^\./||')
 BIN_DIR=$(dirname "$BIN_FILE_CLEAN")
 
-SANDBOX_HOME="/tmp/linapp_chroot_${USER}_${APP_NAME}"
-mkdir -p "$SANDBOX_HOME"
-
-cat <<EOF > "$TMP_BUILD/AppRun"
-#!/bin/bash
-HERE="\$(dirname "\$(readlink -f "\$0")")"
-
-if [ "$BIN_DIR" = "." ]; then
-    export LD_LIBRARY_PATH="\$HERE:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
-else
-    export LD_LIBRARY_PATH="\$HERE/$BIN_DIR:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
-fi
-export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
-
 cat <<EOF > "$TMP_BUILD/AppRun"
 #!/bin/bash
 HERE="\$(dirname "\$(readlink -f "\$0")")"
