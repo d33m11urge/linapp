@@ -86,11 +86,14 @@ exec bwrap \\
     --ro-bind /sbin /sbin \\
     --ro-bind /etc /etc \\
     --ro-bind /sys /sys \\
+    --ro-bind-try /sys/dev /sys/dev \\
+    --ro-bind-try /sys/devices /sys/devices \\
     --dev-bind /dev/dri /dev/dri \\
     --dev /dev \\
     --proc /proc \\
     --tmpfs /tmp \\
     --dir /run \\
+    --ro-bind-try /run/udev /run/udev \\
     --ro-bind-try /run/systemd /run/systemd \\
     --ro-bind-try /run/user/\$(id -u) /run/user/\$(id -u) \\
     --bind "\$PERSISTENT_HOME" "\$HOME" \\
