@@ -78,6 +78,20 @@ else
 fi
 export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
 
+cat <<EOF > "$TMP_BUILD/AppRun"
+#!/bin/bash
+HERE="\$(dirname "\$(readlink -f "\$0")")"
+
+if [ "$BIN_DIR" = "." ]; then
+    export LD_LIBRARY_PATH="\$HERE:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
+else
+    export LD_LIBRARY_PATH="\$HERE/$BIN_DIR:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
+fi
+export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
+
+PERSISTENT_HOME="\$HOME/.local/share/linapp_sandbox/${APP_NAME}"
+mkdir -p "\$PERSISTENT_HOME"
+
 exec bwrap \\
     --ro-bind /usr /usr \\
     --ro-bind /lib /lib \\
@@ -85,13 +99,15 @@ exec bwrap \\
     --ro-bind /bin /bin \\
     --ro-bind /sbin /sbin \\
     --ro-bind /etc /etc \\
+    --ro-bind /sys /sys \\
+    --dev-bind /dev/dri /dev/dri \\
     --dev /dev \\
     --proc /proc \\
     --tmpfs /tmp \\
     --dir /run \\
     --ro-bind-try /run/systemd /run/systemd \\
     --ro-bind-try /run/user/\$(id -u) /run/user/\$(id -u) \\
-    --bind "$SANDBOX_HOME" "\$HOME" \\
+    --bind "\$PERSISTENT_HOME" "\$HOME" \\
     --bind "\$HERE" "\$HERE" \\
     --chdir "\$HERE" \\
     --setenv HOME "\$HOME" \\
@@ -101,7 +117,7 @@ exec bwrap \\
     --ro-bind-try "\$XDG_RUNTIME_DIR/wayland-0" "\$XDG_RUNTIME_DIR/wayland-0" \\
     --ro-bind-try "/tmp/.X11-unix" "/tmp/.X11-unix" \\
     --ro-bind-try "/etc/resolv.conf" "/etc/resolv.conf" \\
-    ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$@"
+    ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$*"
 EOF
 
 chmod +x "$TMP_BUILD/AppRun"
