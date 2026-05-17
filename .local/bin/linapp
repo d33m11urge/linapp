@@ -25,16 +25,16 @@ notify-send "linapp" "Processing ${APP_NAME}..." --icon=package-x-generic
 if [ "$EXT" = "deb" ]; then
     bsdtar -xf "$FILE" 2>/dev/null
     if [ -f data.tar* ]; then 
-        tar -xf data.tar* && rm data.tar*
+        tar -xf data.tar* && rm -f data.tar*
     fi
-    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 else
     mkdir -p tmp_extract
     bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
     mv tmp_extract/*/* . 2>/dev/null || mv tmp_extract/* . 2>/dev/null
     rm -rf tmp_extract
-    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 fi
+
+find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 
 DESKTOP_FILE=$(find . -name "*.desktop" | grep -v "url_handler" | head -n 1 || true)
 BIN_FILE=""
@@ -46,7 +46,7 @@ if [ -f "$DESKTOP_FILE" ]; then
 fi
 
 if [ -z "$BIN_FILE" ]; then
-    BIN_FILE=$(find . -maxdepth 3 -type f -name "*.jar" | head -n 1 || true)
+    BIN_FILE=$(find . -type f -name "*.jar" | head -n 1 || true)
     if [ -n "$BIN_FILE" ]; then
         LAUNCH_CMD="java -jar "
     fi
@@ -88,7 +88,15 @@ if [ -f "$DESKTOP_FILE" ]; then
     if [ "$(realpath "$DESKTOP_FILE")" != "$(realpath "$LOCAL_DESKTOP")" ]; then
         cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
     fi
+    
     sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
+    
+    if grep -q "^Terminal=" "$LOCAL_DESKTOP"; then
+        sed -i "s@^Terminal=.*@Terminal=false@" "$LOCAL_DESKTOP"
+    else
+        echo "Terminal=false" >> "$LOCAL_DESKTOP"
+    fi
+    
     ICON_PATH=$(find . -name "${APP_NAME}.png" -o -name "google-chrome.png" -o -name "discord.png" -o -name "icon.png" -o -name "*.png" | head -n 1 || true)
     if [ -n "$ICON_PATH" ]; then
         CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
