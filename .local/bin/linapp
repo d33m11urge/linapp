@@ -68,14 +68,14 @@ if [ -f "$DESKTOP_FILE" ]; then
 fi
 
 if [ -z "$TARGET_EXEC" ]; then
-    TARGET_EXEC=$(find . -maxdepth 3 -type f -name "*.jar" | head -n 1 || true)
+    TARGET_EXEC=$(find . -type f -name "*.jar" | head -n 1 || true)
     if [ -n "$TARGET_EXEC" ]; then
         LAUNCH_CMD="/usr/bin/java -jar"
     fi
 fi
 
 if [ -z "$TARGET_EXEC" ]; then
-    TARGET_EXEC=$(find ./usr/bin ./opt ./bin -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox" | head -n 1 || true)
+    TARGET_EXEC=$(find . -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox|AppRun|\.desktop|\.sh" | head -n 1 || true)
 fi
 
 if [ -z "$TARGET_EXEC" ]; then
