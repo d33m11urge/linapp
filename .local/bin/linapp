@@ -9,8 +9,7 @@ fi
 
 FILE="$(realpath "$1")"
 EXT="${FILE##*.}"
-FILENAME=$(basename "$FILE")
-APP_NAME=$(echo "$FILENAME" | cut -d'-' -f1 | cut -d'_' -f1 | tr '[:upper:]' '[:lower:]')
+APP_NAME=$(basename "$FILE" | cut -d'-' -f1 | cut -d'_' -f1 | tr '[:upper:]' '[:lower:]')
 
 TMP_BUILD="/tmp/linapp_build_${APP_NAME}"
 FINAL_APPS_DIR="$HOME/Applications"
@@ -20,82 +19,131 @@ rm -rf "$TMP_BUILD" "$DMG_VOLUME"
 mkdir -p "$TMP_BUILD" "$FINAL_APPS_DIR" "$DMG_VOLUME"
 cd "$TMP_BUILD"
 
-notify-send "linapp" "Processing ${APP_NAME}..." --icon=package-x-generic
+notify-send "linapp" "Extracting ${APP_NAME}..." --icon=package-x-generic
 
-# Расшифровка пакета
 if [ "$EXT" = "deb" ]; then
-    bsdtar -xf "$FILE" 2>/dev/null
-    if [ -f data.tar* ]; then 
-        tar -xf data.tar* && rm -f data.tar*
-    fi
+    bsdtar -xf "$FILE"
+    for archive in data.tar.xz data.tar.gz data.tar.zst data.tar; do
+        if [ -f "$archive" ]; then
+            tar -xf "$archive" && rm -f "$archive"
+        fi
+    done
 else
     mkdir -p tmp_extract
     bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
-    mv tmp_extract/*/* . 2>/dev/null || mv tmp_extract/* . 2>/dev/null
+    if [ $(find tmp_extract -maxdepth 1 -type d | wc -l) -eq 2 ]; then
+        mv tmp_extract/*/* . 2>/dev/null || true
+    else
+        mv tmp_extract/* . 2>/dev/null || true
+    fi
     rm -rf tmp_extract
 fi
 
-# Нормализация файловой структуры (очистка пробелов)
 find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 
-# Четкий поиск официального ярлыка приложения
-DESKTOP_FILE=$(find . -name "*.desktop" ! -name "*url_handler.desktop" | head -n 1)
+if ! command -v pkgfile &> /dev/null; then
+    sudo pacman -S --needed --noconfirm pkgfile desktop-file-utils
+    sudo pkgfile --update
+fi
 
-if [ -z "$DESKTOP_FILE" ]; then
-    notify-send "linapp" "Error: Linux .desktop entry not found in package." --icon=error
+MISSING_LIBS=$(find . -type f -executable 2>/dev/null | xargs ldd 2>/dev/null | grep "not found" | awk '{print $1}' | sort -u || true)
+if [ -n "$MISSING_LIBS" ]; then
+    REQ_PACKAGES=()
+    for lib in $MISSING_LIBS; do
+        PKG=$(pkgfile -b "$lib" | head -n 1 || true)
+        [ -n "$PKG" ] && REQ_PACKAGES+=("$PKG")
+    done
+    if [ ${#REQ_PACKAGES[@]} -ne 0 ]; then
+        sudo pacman -S --needed --noconfirm $(echo "${REQ_PACKAGES[@]}" | tr ' ' '\n' | sort -u)
+    fi
+fi
+
+DESKTOP_FILE=$(find . -path "*/usr/share/applications/*.desktop" -o -path "./*.desktop" | grep -v "url_handler" | head -n 1 || true)
+TARGET_EXEC=""
+LAUNCH_CMD=""
+
+if [ -f "$DESKTOP_FILE" ]; then
+    BIN_NAME=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2- | cut -d' ' -f1 | sed 's/"//g' | xargs basename || true)
+    TARGET_EXEC=$(find ./usr/bin ./opt ./bin -type f -executable -name "$BIN_NAME" 2>/dev/null | head -n 1 || true)
+fi
+
+if [ -z "$TARGET_EXEC" ]; then
+    TARGET_EXEC=$(find . -maxdepth 3 -type f -name "*.jar" | head -n 1 || true)
+    if [ -n "$TARGET_EXEC" ]; then
+        LAUNCH_CMD="/usr/bin/java -jar"
+    fi
+fi
+
+if [ -z "$TARGET_EXEC" ]; then
+    TARGET_EXEC=$(find ./usr/bin ./opt ./bin -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox" | head -n 1 || true)
+fi
+
+if [ -z "$TARGET_EXEC" ]; then
+    notify-send "linapp" "Error: No valid executable binary found." --icon=error
     exit 1
 fi
 
-# Извлекаем имя исполняемого файла из официального манифеста Exec=
-BIN_NAME=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2 | awk '{print $1}' | sed 's/"//g' | xargs basename)
+CLEAN_BIN_PATH=$(echo "$TARGET_EXEC" | sed 's|^\./||')
+BIN_DIR=$(dirname "$CLEAN_BIN_PATH")
+[ -z "$LAUNCH_CMD" ] && LAUNCH_CMD="\"\$HERE/$CLEAN_BIN_PATH\"" || LAUNCH_CMD="$LAUNCH_CMD \"\$HERE/$CLEAN_BIN_PATH\""
 
-# Находим физическое расположение этого бинарника внутри папки
-BIN_PATH=$(find . -type f -executable -name "$BIN_NAME" | head -n 1)
+SANDBOX_HOME="/tmp/linapp_chroot_${USER}_${APP_NAME}"
+mkdir -p "$SANDBOX_HOME"
 
-# Если это Java-приложение (.jar), у которого нет бинарника Linux
-if [ -z "$BIN_PATH" ]; then
-    BIN_PATH=$(find . -type f -name "*.jar" -iname "*${APP_NAME}*" | head -n 1)
-fi
-
-if [ -z "$BIN_PATH" ]; then
-    notify-send "linapp" "Error: Target executable [$BIN_NAME] not found." --icon=error
-    exit 1
-fi
-
-BIN_FILE_CLEAN=$(echo "$BIN_PATH" | sed 's|^\./||')
-BIN_DIR=$(dirname "$BIN_FILE_CLEAN")
-
-# Сборка предсказуемого AppRun (без ИИ-угадываний)
 cat <<EOF > "$TMP_BUILD/AppRun"
 #!/bin/bash
+set -euo pipefail
 HERE="\$(dirname "\$(readlink -f "\$0")")"
 
 export LD_LIBRARY_PATH="\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$HERE/$BIN_DIR:\${LD_LIBRARY_PATH:-}"
 export XDG_DATA_DIRS="\$HERE/usr/share:\${XDG_DATA_DIRS:-}"
 
+exec bwrap \\
+    --ro-bind /usr /usr \\
+    --ro-bind /lib /lib \\
+    --ro-bind /lib64 /lib64 \\
+    --ro-bind /bin /bin \\
+    --ro-bind /sbin /sbin \\
+    --ro-bind /etc /etc \\
+    --dev /dev \\
+    --proc /proc \\
+    --tmpfs /tmp \\
+    --dir /run \\
+    --ro-bind-try /run/systemd /run/systemd \\
+    --ro-bind-try /run/user/\$(id -u) /run/user/\$(id -u) \\
+    --bind "$SANDBOX_HOME" "\$HOME" \\
+    --bind "\$HERE" "\$HERE" \\
+    --chdir "\$HERE" \\
+    --setenv HOME "\$HOME" \\
+    --setenv DISPLAY "\$DISPLAY" \\
+    --setenv LD_LIBRARY_PATH "\$LD_LIBRARY_PATH" \\
+    --setenv XDG_DATA_DIRS "\$XDG_DATA_DIRS" \\
+    --ro-bind-try "\$XDG_RUNTIME_DIR/wayland-0" "\$XDG_RUNTIME_DIR/wayland-0" \\
+    --ro-bind-try "/tmp/.X11-unix" "/tmp/.X11-unix" \\
+    --ro-bind-try "/etc/resolv.conf" "/etc/resolv.conf" \\
+    $LAUNCH_CMD "\$@"
 EOF
-
-if [[ "$BIN_FILE_CLEAN" == *.jar ]]; then
-    echo 'exec java -jar "$HERE/'"$BIN_FILE_CLEAN"'" "$@"' >> "$TMP_BUILD/AppRun"
-else
-    echo 'exec "$HERE/'"$BIN_FILE_CLEAN"'" "$@"' >> "$TMP_BUILD/AppRun"
-fi
-
 chmod +x "$TMP_BUILD/AppRun"
 
-# Интеграция в системное меню KDE Plasma
 LAUNCHER_DIR="$HOME/.local/share/applications"
 mkdir -p "$LAUNCHER_DIR"
-
 LOCAL_DESKTOP="$TMP_BUILD/${APP_NAME}.desktop"
-cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
+
+if [ -f "$DESKTOP_FILE" ]; then
+    cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
+else
+    cat <<EOF > "$LOCAL_DESKTOP"
+[Desktop Entry]
+Type=Application
+Name=${APP_NAME^}
+Categories=Utility;
+EOF
+fi
 
 sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
 
-# Поиск иконки
 ICON_NAME=$(grep -E "^Icon=" "$LOCAL_DESKTOP" | head -n 1 | cut -d= -f2 || true)
 ICON_PATH=$(find . -name "${ICON_NAME}.png" -o -name "${APP_NAME}.png" -o -name "*.png" | head -n 1 || true)
-
 if [ -n "$ICON_PATH" ]; then
     CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
     sed -i "s@^Icon=.*@Icon=$FINAL_APPS_DIR/$APP_NAME/$CLEAN_ICON_PATH@" "$LOCAL_DESKTOP"
@@ -103,7 +151,6 @@ fi
 
 ln -sf "$FINAL_APPS_DIR/$APP_NAME/${APP_NAME}.desktop" "$LAUNCHER_DIR/${APP_NAME}.desktop"
 
-# Скрипт размонтирования "установщика"
 EJECT_SCRIPT="$DMG_VOLUME/Eject_Installer.sh"
 cat <<EOF > "$EJECT_SCRIPT"
 #!/bin/bash
