@@ -32,17 +32,17 @@ else
     mkdir -p tmp_extract
     bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
     if [ $(find tmp_extract -maxdepth 1 -type d | wc -l) -eq 2 ]; then
-        mv tmp_extract/*/* . 2>/dev/null || true
+        rsync -a tmp_extract/*/ .
     else
-        mv tmp_extract/* . 2>/dev/null || true
+        rsync -a tmp_extract/ .
     fi
     rm -rf tmp_extract
 fi
 
 find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 
-if ! command -v pkgfile &> /dev/null; then
-    sudo pacman -S --needed --noconfirm pkgfile desktop-file-utils
+if ! command -v rsync &> /dev/null || ! command -v pkgfile &> /dev/null; then
+    sudo pacman -S --needed --noconfirm rsync pkgfile desktop-file-utils
     sudo pkgfile --update
 fi
 
@@ -59,12 +59,14 @@ if [ -n "$MISSING_LIBS" ]; then
 fi
 
 DESKTOP_FILE=$(find . -path "*/usr/share/applications/*.desktop" -o -path "./*.desktop" | grep -v "url_handler" | head -n 1 || true)
-TARGET_EXEC=""
 LAUNCH_CMD=""
 
 if [ -f "$DESKTOP_FILE" ]; then
-    BIN_NAME=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2- | cut -d' ' -f1 | sed 's/"//g' | xargs basename || true)
-    TARGET_EXEC=$(find ./usr/bin ./opt ./bin -type f -executable -name "$BIN_NAME" 2>/dev/null | head -n 1 || true)
+    RAW_EXEC=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2- | cut -d' ' -f1 | sed 's/"//g')
+    BIN_NAME=$(basename "$RAW_EXEC")
+    TARGET_EXEC=$(find . -type f -executable -name "$BIN_NAME" 2>/dev/null | head -n 1 || true)
+else
+    TARGET_EXEC=""
 fi
 
 if [ -z "$TARGET_EXEC" ]; then
@@ -162,7 +164,7 @@ EOF
 chmod +x "$EJECT_SCRIPT"
 
 mkdir -p "$DMG_VOLUME/${APP_NAME}"
-cp -a "$TMP_BUILD/." "$DMG_VOLUME/${APP_NAME}/"
+rsync -a "$TMP_BUILD/" "$DMG_VOLUME/${APP_NAME}/"
 ln -sf "$FINAL_APPS_DIR" "$DMG_VOLUME/Applications"
 
 notify-send "linapp" "Build complete. Drag the app to Applications." --icon=dialog-information
