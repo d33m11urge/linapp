@@ -1,15 +1,16 @@
 #!/bin/bash
 
-set -euo pipefail
+set -e
 
-if [ -z "${1:-}" ]; then
+if [ -z "$1" ]; then
     notify-send "linapp" "Error: No input file specified." --icon=error
     exit 1
 fi
 
 FILE="$(realpath "$1")"
 EXT="${FILE##*.}"
-APP_NAME=$(basename "$FILE" | cut -d'-' -f1 | cut -d'_' -f1 | tr '[:upper:]' '[:lower:]')
+FILENAME=$(basename "$FILE")
+APP_NAME=$(echo "$FILENAME" | cut -d'-' -f1 | cut -d'_' -f1 | tr '[:upper:]' '[:lower:]')
 
 TMP_BUILD="/tmp/linapp_build_${APP_NAME}"
 FINAL_APPS_DIR="$HOME/Applications"
@@ -19,139 +20,82 @@ rm -rf "$TMP_BUILD" "$DMG_VOLUME"
 mkdir -p "$TMP_BUILD" "$FINAL_APPS_DIR" "$DMG_VOLUME"
 cd "$TMP_BUILD"
 
-notify-send "linapp" "Extracting ${APP_NAME}..." --icon=package-x-generic
+notify-send "linapp" "Processing ${APP_NAME}..." --icon=package-x-generic
 
 if [ "$EXT" = "deb" ]; then
-    bsdtar -xf "$FILE"
-    for archive in data.tar.xz data.tar.gz data.tar.zst data.tar; do
-        if [ -f "$archive" ]; then
-            tar -xf "$archive" && rm -f "$archive"
-        fi
-    done
+    bsdtar -xf "$FILE" 2>/dev/null
+    if [ -f data.tar* ]; then 
+        tar -xf data.tar* && rm data.tar*
+    fi
+    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 else
     mkdir -p tmp_extract
     bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
-    if [ $(find tmp_extract -maxdepth 1 -type d | wc -l) -eq 2 ]; then
-        rsync -a tmp_extract/*/ .
-    else
-        rsync -a tmp_extract/ .
-    fi
+    mv tmp_extract/*/* . 2>/dev/null || mv tmp_extract/* . 2>/dev/null
     rm -rf tmp_extract
+    find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
 fi
 
-find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
-
-if ! command -v rsync &> /dev/null || ! command -v pkgfile &> /dev/null; then
-    sudo pacman -S --needed --noconfirm rsync pkgfile desktop-file-utils
-    sudo pkgfile --update
-fi
-
-MISSING_LIBS=$(find . -type f -executable 2>/dev/null | xargs ldd 2>/dev/null | grep "not found" | awk '{print $1}' | sort -u || true)
-if [ -n "$MISSING_LIBS" ]; then
-    REQ_PACKAGES=()
-    for lib in $MISSING_LIBS; do
-        PKG=$(pkgfile -b "$lib" | head -n 1 || true)
-        [ -n "$PKG" ] && REQ_PACKAGES+=("$PKG")
-    done
-    if [ ${#REQ_PACKAGES[@]} -ne 0 ]; then
-        sudo pacman -S --needed --noconfirm $(echo "${REQ_PACKAGES[@]}" | tr ' ' '\n' | sort -u)
-    fi
-fi
-
-DESKTOP_FILE=$(find . -path "*/usr/share/applications/*.desktop" -o -path "./*.desktop" | grep -v "url_handler" | head -n 1 || true)
+DESKTOP_FILE=$(find . -name "*.desktop" | grep -v "url_handler" | head -n 1 || true)
+BIN_FILE=""
 LAUNCH_CMD=""
 
 if [ -f "$DESKTOP_FILE" ]; then
-    RAW_EXEC=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2- | cut -d' ' -f1 | sed 's/"//g')
-    BIN_NAME=$(basename "$RAW_EXEC")
-    TARGET_EXEC=$(find . -type f -executable -name "$BIN_NAME" 2>/dev/null | head -n 1 || true)
-else
-    TARGET_EXEC=""
+    BIN_NAME=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2- | cut -d' ' -f1 | sed 's/"//g' | xargs basename || true)
+    BIN_FILE=$(find ./usr/bin ./opt ./bin ./usr/share -type f -executable -name "$BIN_NAME" 2>/dev/null | head -n 1 || true)
 fi
 
-if [ -z "$TARGET_EXEC" ]; then
-    TARGET_EXEC=$(find . -type f -name "*.jar" | head -n 1 || true)
-    if [ -n "$TARGET_EXEC" ]; then
-        LAUNCH_CMD="/usr/bin/java -jar"
+if [ -z "$BIN_FILE" ]; then
+    BIN_FILE=$(find . -maxdepth 3 -type f -name "*.jar" | head -n 1 || true)
+    if [ -n "$BIN_FILE" ]; then
+        LAUNCH_CMD="java -jar "
     fi
 fi
 
-if [ -z "$TARGET_EXEC" ]; then
-    TARGET_EXEC=$(find . -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox|AppRun|\.desktop|\.sh" | head -n 1 || true)
+if [ -z "$BIN_FILE" ]; then
+    BIN_FILE=$(find . -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox|AppRun|\.desktop|\.sh|\.png|\.svg|\.txt" | head -n 1 || true)
 fi
 
-if [ -z "$TARGET_EXEC" ]; then
-    notify-send "linapp" "Error: No valid executable binary found." --icon=error
+if [ -z "$BIN_FILE" ]; then
+    notify-send "linapp" "Error: Executable target not found." --icon=error
     exit 1
 fi
 
-CLEAN_BIN_PATH=$(echo "$TARGET_EXEC" | sed 's|^\./||')
-BIN_DIR=$(dirname "$CLEAN_BIN_PATH")
-[ -z "$LAUNCH_CMD" ] && LAUNCH_CMD="\"\$HERE/$CLEAN_BIN_PATH\"" || LAUNCH_CMD="$LAUNCH_CMD \"\$HERE/$CLEAN_BIN_PATH\""
-
-SANDBOX_HOME="/tmp/linapp_chroot_${USER}_${APP_NAME}"
-mkdir -p "$SANDBOX_HOME"
+BIN_FILE_CLEAN=$(echo "$BIN_FILE" | sed 's|^\./||')
+BIN_DIR=$(dirname "$BIN_FILE_CLEAN")
 
 cat <<EOF > "$TMP_BUILD/AppRun"
 #!/bin/bash
-set -euo pipefail
 HERE="\$(dirname "\$(readlink -f "\$0")")"
 
-export LD_LIBRARY_PATH="\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$HERE/$BIN_DIR:\${LD_LIBRARY_PATH:-}"
-export XDG_DATA_DIRS="\$HERE/usr/share:\${XDG_DATA_DIRS:-}"
+if [ "$BIN_DIR" = "." ]; then
+    export LD_LIBRARY_PATH="\$HERE:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
+else
+    export LD_LIBRARY_PATH="\$HERE/$BIN_DIR:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
+fi
+export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
 
-exec bwrap \\
-    --ro-bind /usr /usr \\
-    --ro-bind /lib /lib \\
-    --ro-bind /lib64 /lib64 \\
-    --ro-bind /bin /bin \\
-    --ro-bind /sbin /sbin \\
-    --ro-bind /etc /etc \\
-    --dev /dev \\
-    --proc /proc \\
-    --tmpfs /tmp \\
-    --dir /run \\
-    --ro-bind-try /run/systemd /run/systemd \\
-    --ro-bind-try /run/user/\$(id -u) /run/user/\$(id -u) \\
-    --bind "$SANDBOX_HOME" "\$HOME" \\
-    --bind "\$HERE" "\$HERE" \\
-    --chdir "\$HERE" \\
-    --setenv HOME "\$HOME" \\
-    --setenv DISPLAY "\$DISPLAY" \\
-    --setenv LD_LIBRARY_PATH "\$LD_LIBRARY_PATH" \\
-    --setenv XDG_DATA_DIRS "\$XDG_DATA_DIRS" \\
-    --ro-bind-try "\$XDG_RUNTIME_DIR/wayland-0" "\$XDG_RUNTIME_DIR/wayland-0" \\
-    --ro-bind-try "/tmp/.X11-unix" "/tmp/.X11-unix" \\
-    --ro-bind-try "/etc/resolv.conf" "/etc/resolv.conf" \\
-    $LAUNCH_CMD "\$@"
+exec ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$@"
 EOF
+
 chmod +x "$TMP_BUILD/AppRun"
 
 LAUNCHER_DIR="$HOME/.local/share/applications"
 mkdir -p "$LAUNCHER_DIR"
-LOCAL_DESKTOP="$TMP_BUILD/${APP_NAME}.desktop"
 
 if [ -f "$DESKTOP_FILE" ]; then
-    cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
-else
-    cat <<EOF > "$LOCAL_DESKTOP"
-[Desktop Entry]
-Type=Application
-Name=${APP_NAME^}
-Categories=Utility;
-EOF
+    LOCAL_DESKTOP="$TMP_BUILD/${APP_NAME}.desktop"
+    if [ "$(realpath "$DESKTOP_FILE")" != "$(realpath "$LOCAL_DESKTOP")" ]; then
+        cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
+    fi
+    sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
+    ICON_PATH=$(find . -name "${APP_NAME}.png" -o -name "google-chrome.png" -o -name "discord.png" -o -name "icon.png" -o -name "*.png" | head -n 1 || true)
+    if [ -n "$ICON_PATH" ]; then
+        CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
+        sed -i "s@^Icon=.*@Icon=$FINAL_APPS_DIR/$APP_NAME/$CLEAN_ICON_PATH@" "$LOCAL_DESKTOP"
+    fi
+    ln -sf "$FINAL_APPS_DIR/$APP_NAME/${APP_NAME}.desktop" "$LAUNCHER_DIR/${APP_NAME}.desktop"
 fi
-
-sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
-
-ICON_NAME=$(grep -E "^Icon=" "$LOCAL_DESKTOP" | head -n 1 | cut -d= -f2 || true)
-ICON_PATH=$(find . -name "${ICON_NAME}.png" -o -name "${APP_NAME}.png" -o -name "*.png" | head -n 1 || true)
-if [ -n "$ICON_PATH" ]; then
-    CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
-    sed -i "s@^Icon=.*@Icon=$FINAL_APPS_DIR/$APP_NAME/$CLEAN_ICON_PATH@" "$LOCAL_DESKTOP"
-fi
-
-ln -sf "$FINAL_APPS_DIR/$APP_NAME/${APP_NAME}.desktop" "$LAUNCHER_DIR/${APP_NAME}.desktop"
 
 EJECT_SCRIPT="$DMG_VOLUME/Eject_Installer.sh"
 cat <<EOF > "$EJECT_SCRIPT"
@@ -164,7 +108,7 @@ EOF
 chmod +x "$EJECT_SCRIPT"
 
 mkdir -p "$DMG_VOLUME/${APP_NAME}"
-rsync -a "$TMP_BUILD/" "$DMG_VOLUME/${APP_NAME}/"
+cp -a "$TMP_BUILD/." "$DMG_VOLUME/${APP_NAME}/"
 ln -sf "$FINAL_APPS_DIR" "$DMG_VOLUME/Applications"
 
 notify-send "linapp" "Build complete. Drag the app to Applications." --icon=dialog-information
