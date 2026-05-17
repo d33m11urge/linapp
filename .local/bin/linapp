@@ -161,8 +161,11 @@ kbuildsycoca6 2>/dev/null || kbuildsycoca5 2>/dev/null || true
 EOF
 chmod +x "$EJECT_SCRIPT"
 
-mv "$TMP_BUILD" "$DMG_VOLUME/${APP_NAME}"
+mkdir -p "$DMG_VOLUME/${APP_NAME}"
+cp -a "$TMP_BUILD/." "$DMG_VOLUME/${APP_NAME}/"
 ln -sf "$FINAL_APPS_DIR" "$DMG_VOLUME/Applications"
 
 notify-send "linapp" "Build complete. Drag the app to Applications." --icon=dialog-information
+pkill -f "dolphin $DMG_VOLUME" || true
+sleep 0.5
 dolphin "$DMG_VOLUME" &
