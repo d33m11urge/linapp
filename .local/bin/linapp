@@ -64,6 +64,9 @@ fi
 BIN_FILE_CLEAN=$(echo "$BIN_FILE" | sed 's|^\./||')
 BIN_DIR=$(dirname "$BIN_FILE_CLEAN")
 
+SANDBOX_HOME="/tmp/linapp_chroot_${USER}_${APP_NAME}"
+mkdir -p "$SANDBOX_HOME"
+
 cat <<EOF > "$TMP_BUILD/AppRun"
 #!/bin/bash
 HERE="\$(dirname "\$(readlink -f "\$0")")"
@@ -75,7 +78,30 @@ else
 fi
 export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
 
-exec ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$@"
+exec bwrap \\
+    --ro-bind /usr /usr \\
+    --ro-bind /lib /lib \\
+    --ro-bind /lib64 /lib64 \\
+    --ro-bind /bin /bin \\
+    --ro-bind /sbin /sbin \\
+    --ro-bind /etc /etc \\
+    --dev /dev \\
+    --proc /proc \\
+    --tmpfs /tmp \\
+    --dir /run \\
+    --ro-bind-try /run/systemd /run/systemd \\
+    --ro-bind-try /run/user/\$(id -u) /run/user/\$(id -u) \\
+    --bind "$SANDBOX_HOME" "\$HOME" \\
+    --bind "\$HERE" "\$HERE" \\
+    --chdir "\$HERE" \\
+    --setenv HOME "\$HOME" \\
+    --setenv DISPLAY "\$DISPLAY" \\
+    --setenv LD_LIBRARY_PATH "\$LD_LIBRARY_PATH" \\
+    --setenv XDG_DATA_DIRS "\$XDG_DATA_DIRS" \\
+    --ro-bind-try "\$XDG_RUNTIME_DIR/wayland-0" "\$XDG_RUNTIME_DIR/wayland-0" \\
+    --ro-bind-try "/tmp/.X11-unix" "/tmp/.X11-unix" \\
+    --ro-bind-try "/etc/resolv.conf" "/etc/resolv.conf" \\
+    ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$@"
 EOF
 
 chmod +x "$TMP_BUILD/AppRun"
@@ -89,7 +115,14 @@ if [ -f "$DESKTOP_FILE" ]; then
         cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
     fi
     
-    sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
+    if [ -n "$LAUNCH_CMD" ]; then
+        sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun@" "$LOCAL_DESKTOP"
+    else
+        sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
+    fi
+    
+    sed -i '/^Path=/d' "$LOCAL_DESKTOP"
+    echo "Path=$FINAL_APPS_DIR/$APP_NAME" >> "$LOCAL_DESKTOP"
     
     if grep -q "^Terminal=" "$LOCAL_DESKTOP"; then
         sed -i "s@^Terminal=.*@Terminal=false@" "$LOCAL_DESKTOP"
