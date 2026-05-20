@@ -10,11 +10,8 @@ Usage: linapp [OPTION] [ARGUMENTS]
 
 Options:
   --install-flatpak <app_id> <name>    Isolate and manage a Flatpak application
-  --remove-flatpak <app_id> <name>     Completely remove an isolated Flatpak app
+  --remove <name> [app_id]             Completely remove an application
   --help                               Show this help message
-
-GUI Usage:
-  Double-click on any .deb, .tar.gz or .AppImage file to install via linapp.
 EOF
 }
 
@@ -28,7 +25,7 @@ install_flatpak() {
     fi
 
     if ! command -v flatpak >/dev/null 2>&1; then
-        echo "Error: flatpak is not installed" >&2
+        echo "Error: flatpak execution binary not found" >&2
         return 1
     fi
 
@@ -71,7 +68,7 @@ flatpak run \
 rm -f "$FLATPAK_DIR" 2>/dev/null
 EOF
 
-    sed -i "s/TOKEN_APP_ID/$app_id/g" "$target_dir/bin/launch"
+    sed -i "s|TOKEN_APP_ID|$app_id|g" "$target_dir/bin/launch"
     chmod +x "$target_dir/bin/launch"
 
     local flatpak_src="$HOME/.local/share/flatpak/app/$app_id/current/active/files"
@@ -99,26 +96,6 @@ EOF
     update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
 }
 
-remove_flatpak() {
-    local app_id="$1"
-    local app_name="$2"
-
-    if [ -z "$app_id" ] || [ -z "$app_name" ]; then
-        echo "Error: Missing arguments (app_id app_name)" >&2
-        return 1
-    fi
-
-    rm -rf "$APPS_DIR/$app_name"
-    rm -f "$DESKTOP_DIR/${app_id,,}.desktop"
-    rm -f "$HOME/.var/app/$app_id" 2>/dev/null
-
-    if command -v flatpak >/dev/null 2>&1; then
-        flatpak uninstall --user -y "$app_id" >/dev/null 2>&1
-    fi
-
-    update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
-}
-
 install_appimage() {
     local file_path="$1"
     local app_name="$2"
@@ -141,6 +118,30 @@ EOF
     update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
 }
 
+remove_app() {
+    local app_name="$1"
+    local app_id="$2"
+
+    if [ -z "$app_name" ]; then
+        echo "Error: Missing argument (app_name)" >&2
+        return 1
+    fi
+
+    rm -rf "$APPS_DIR/$app_name"
+    rm -f "$DESKTOP_DIR/${app_name,,}.desktop"
+
+    if [ -n "$app_id" ]; then
+        rm -f "$DESKTOP_DIR/${app_id,,}.desktop"
+        rm -f "$HOME/.var/app/$app_id" 2>/dev/null
+        if command -v flatpak >/dev/null 2>&1; then
+            flatpak uninstall --user -y "$app_id" >/dev/null 2>&1
+        fi
+    fi
+
+    update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
+}
+
+# GUI Router
 if [ -f "$1" ] && [ -z "$2" ]; then
     file_path=$(readlink -f "$1")
     file_ext="${file_path##*.}"
@@ -148,7 +149,12 @@ if [ -f "$1" ] && [ -z "$2" ]; then
 
     case "${file_ext,,}" in
         deb|gz|tgz)
-            exec linapp-legacy-installer "$file_path"
+            if command -v linapp-installer >/dev/null 2>&1; then
+                exec linapp-installer "$file_path"
+            else
+                echo "Error: linapp-installer backend not found" >&2
+                exit 1
+            fi
             exit 0
             ;;
         appimage)
@@ -156,18 +162,19 @@ if [ -f "$1" ] && [ -z "$2" ]; then
             exit 0
             ;;
         *)
-            echo "Error: Unsupported file format" >&2
+            echo "Error: Unsupported format" >&2
             exit 1
             ;;
     esac
 fi
 
+# CLI Interface
 case "$1" in
     --install-flatpak)
         install_flatpak "$2" "$3"
         ;;
-    --remove-flatpak)
-        remove_flatpak "$2" "$3"
+    --remove)
+        remove_app "$2" "$3"
         ;;
     *)
         show_help
