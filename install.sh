@@ -17,10 +17,17 @@ if [ -f "bin/linapp-installer" ]; then
     chmod +x "$BIN_DIR/linapp-installer"
 fi
 
+if [ -f "linapp-installer.desktop" ]; then
+    cp "linapp-installer.desktop" "$DESKTOP_DIR/linapp-installer.desktop"
+    sed -i "s|Exec=./bin/linapp-installer %f|Exec=$BIN_DIR/linapp-installer %f|g" "$DESKTOP_DIR/linapp-installer.desktop"
+    sed -i "s|Icon=./linapp.png|Icon=$BIN_DIR/linapp.png|g" "$DESKTOP_DIR/linapp-installer.desktop"
+    chmod +x "$DESKTOP_DIR/linapp-installer.desktop"
+fi
+
 cat << EOF > "$DESKTOP_DIR/linapp-handler.desktop"
 [Desktop Entry]
 Type=Application
-Name=Linapp Package Installer
+Name=Linapp Package Handler
 Exec=$BIN_DIR/linapp %f
 MimeType=application/vnd.debian.binary-package;application/x-compressed-tar;application/x-gtar;application/x-tgz;application/x-appimage;
 NoDisplay=true
@@ -56,10 +63,10 @@ MIME_TYPES=(
 
 for mime in "${MIME_TYPES[@]}"; do
     if grep -q "^${mime}=" "$MIME_CONFIG"; then
-        sed -i "s|^${mime}=.*|${mime}=linapp-handler.desktop|" "$MIME_CONFIG"
-    else
-        sed -i "/\[Default Applications\]/a ${mime}=linapp-handler.desktop" "$MIME_CONFIG"
+        grep -v "^${mime}=" "$MIME_CONFIG" > "${MIME_CONFIG}.tmp"
+        mv "${MIME_CONFIG}.tmp" "$MIME_CONFIG"
     fi
+    sed -i "/\[Default Applications\]/a ${mime}=linapp-handler.desktop" "$MIME_CONFIG"
 done
 
 update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
