@@ -1,153 +1,132 @@
 #!/bin/bash
 
-APPS_DIR="$HOME/Applications"
-DESKTOP_DIR="$HOME/.local/share/applications"
-FLATPAK_REMOTES_URL="https://flathub.org"
+set -e
 
-show_help() {
-    cat << 'INNER'
-Usage: linapp [OPTION] [ARGUMENTS]
+if [ -z "$1" ]; then
+    notify-send "linapp" "Error: No input file specified." --icon=error
+    exit 1
+fi
 
-Options:
-  --install-flatpak <app_id> <name>    Isolate and manage a Flatpak application
-  --remove <name> [app_id]             Completely remove an application
-  --help                               Show this help message
-INNER
-}
+FILE="$(realpath "$1")"
+EXT="${FILE##*.}"
+FILENAME=$(basename "$FILE")
+APP_NAME=$(echo "$FILENAME" | cut -d'-' -f1 | cut -d'_' -f1 | tr '[:upper:]' '[:lower:]')
 
-install_flatpak() {
-    local app_id="$1"
-    local app_name="$2"
-    if [ -z "$app_id" ] || [ -z "$app_name" ]; then
-        echo "Error: Missing arguments (app_id app_name)" >&2
-        return 1
+TMP_BUILD="/tmp/linapp_build_${APP_NAME}"
+FINAL_APPS_DIR="$HOME/Applications"
+DMG_VOLUME="/tmp/${APP_NAME}-Installer"
+
+rm -rf "$TMP_BUILD" "$DMG_VOLUME"
+mkdir -p "$TMP_BUILD" "$FINAL_APPS_DIR" "$DMG_VOLUME"
+cd "$TMP_BUILD"
+
+notify-send "linapp" "Processing ${APP_NAME}..." --icon=package-x-generic
+
+if [ "$EXT" = "deb" ]; then
+    bsdtar -xf "$FILE" 2>/dev/null
+    if [ -f data.tar* ]; then 
+        tar -xf data.tar* && rm -f data.tar*
     fi
-    if ! command -v flatpak >/dev/null 2>&1; then
-        echo "Error: flatpak execution binary not found" >&2
-        return 1
+else
+    mkdir -p tmp_extract
+    bsdtar -xf "$FILE" -C tmp_extract/ 2>/dev/null || tar -xf "$FILE" -C tmp_extract/
+    mv tmp_extract/*/* . 2>/dev/null || mv tmp_extract/* . 2>/dev/null
+    rm -rf tmp_extract
+fi
+
+find . -depth -name "* *" -execdir bash -c 'mv "$1" "${1// /_}"' _ {} \; 2>/dev/null || true
+
+DESKTOP_FILE=$(find . -name "*.desktop" | grep -v "url_handler" | head -n 1 || true)
+BIN_FILE=""
+LAUNCH_CMD=""
+
+if [ -f "$DESKTOP_FILE" ]; then
+    BIN_NAME=$(grep -E "^Exec=" "$DESKTOP_FILE" | head -n 1 | cut -d= -f2- | cut -d' ' -f1 | sed 's/"//g' | xargs basename || true)
+    BIN_FILE=$(find ./usr/bin ./opt ./bin ./usr/share -type f -executable -name "$BIN_NAME" 2>/dev/null | head -n 1 || true)
+fi
+
+if [ -z "$BIN_FILE" ]; then
+    BIN_FILE=$(find . -type f -name "*.jar" | head -n 1 || true)
+    if [ -n "$BIN_FILE" ]; then
+        LAUNCH_CMD="java -jar "
     fi
-    local target_dir="$APPS_DIR/$app_name"
-    local desktop_file="$DESKTOP_DIR/${app_id,,}.desktop"
-    local flatpak_dir="$HOME/.var/app/$app_id"
-    mkdir -p "$target_dir/bin" "$target_dir/sandbox_home"
-    if [ -d "$flatpak_dir" ] && [ ! -L "$flatpak_dir" ]; then
-        cp -r "$flatpak_dir"/. "$target_dir/sandbox_home/" 2>/dev/null
-        rm -rf "$flatpak_dir"
-    fi
-    flatpak remote-add --user --no-gpg-verify --if-not-exists flathub "$FLATPAK_REMOTES_URL" >/dev/null 2>&1
-    flatpak install --user -y flathub "$app_id" >/dev/null 2>&1
-    cat << 'LAUNCHER' > "$target_dir/bin/launch"
+fi
+
+if [ -z "$BIN_FILE" ]; then
+    BIN_FILE=$(find . -type f -executable 2>/dev/null | grep -v -E "bootstrap|crashpad|sandbox|AppRun|\.desktop|\.sh|\.png|\.svg|\.txt" | head -n 1 || true)
+fi
+
+if [ -z "$BIN_FILE" ]; then
+    notify-send "linapp" "Error: Executable target not found." --icon=error
+    exit 1
+fi
+
+BIN_FILE_CLEAN=$(echo "$BIN_FILE" | sed 's|^\./||')
+BIN_DIR=$(dirname "$BIN_FILE_CLEAN")
+
+cat <<EOF > "$TMP_BUILD/AppRun"
 #!/bin/bash
-HERE="$(dirname "$(readlink -f "$0")")"
-APP_DIR="$(dirname "$HERE")"
-SANDBOX_HOME="$APP_DIR/sandbox_home"
-APP_ID="TOKEN_APP_ID"
-FLATPAK_DIR="$HOME/.var/app/$APP_ID"
-if [ ! -L "$FLATPAK_DIR" ]; then
-    rm -rf "$FLATPAK_DIR" 2>/dev/null
-    ln -s "$SANDBOX_HOME" "$FLATPAK_DIR"
+HERE="\$(dirname "\$(readlink -f "\$0")")"
+
+if [ "$BIN_DIR" = "." ]; then
+    export LD_LIBRARY_PATH="\$HERE:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
+else
+    export LD_LIBRARY_PATH="\$HERE/$BIN_DIR:\$HERE/usr/lib:\$HERE/usr/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
 fi
-flatpak run --user --device=all --socket=wayland --socket=x11 --socket=pulseaudio "$APP_ID" "$@"
-rm -f "$FLATPAK_DIR" 2>/dev/null
-LAUNCHER
-    sed -i "s|TOKEN_APP_ID|$app_id|g" "$target_dir/bin/launch"
-    chmod +x "$target_dir/bin/launch"
-    local flatpak_src="$HOME/.local/share/flatpak/app/$app_id/current/active/files"
-    local icon_path
-    icon_path=$(find "$flatpak_src/share/icons" -name "${app_id}.svg" -o -name "${app_id}.png" 2>/dev/null | head -n 1)
-    local final_icon="application-x-executable"
-    if [ -n "$icon_path" ]; then
-        mkdir -p "$target_dir/share"
-        cp "$icon_path" "$target_dir/share/icon${icon_path##*.}"
-        final_icon="$target_dir/share/icon${icon_path##*.}"
-    fi
-    cat << DESKTOP > "$desktop_file"
-[Desktop Entry]
-Name=$app_name
-Exec=$target_dir/bin/launch
-Icon=$final_icon
-Terminal=false
-Type=Application
-Categories=Utility;
-DESKTOP
-    chmod +x "$desktop_file"
-    update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
-}
+export XDG_DATA_DIRS="\$HERE/usr/share:\$XDG_DATA_DIRS"
 
-install_appimage() {
-    local file_path="$1"
-    local app_name="$2"
-    local target_dir="$APPS_DIR/$app_name"
-    mkdir -p "$target_dir/bin"
-    cp "$file_path" "$target_dir/bin/$app_name.AppImage"
-    chmod +x "$target_dir/bin/$app_name.AppImage"
-    cat << DESKTOP > "$DESKTOP_DIR/${app_name,,}.desktop"
-[Desktop Entry]
-Name=$app_name
-Exec=$target_dir/bin/$app_name.AppImage
-Icon=application-x-executable
-Terminal=false
-Type=Application
-Categories=Utility;
-DESKTOP
-    chmod +x "$DESKTOP_DIR/${app_name,,}.desktop"
-    update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
-}
+exec ${LAUNCH_CMD}"\$HERE/$BIN_FILE_CLEAN" "\$@"
+EOF
 
-remove_app() {
-    local app_name="$1"
-    local app_id="$2"
-    if [ -z "$app_name" ]; then
-        echo "Error: Missing argument (app_name)" >&2
-        return 1
-    fi
-    rm -rf "$APPS_DIR/$app_name"
-    rm -f "$DESKTOP_DIR/${app_name,,}.desktop"
-    if [ -n "$app_id" ]; then
-        rm -f "$DESKTOP_DIR/${app_id,,}.desktop"
-        rm -f "$HOME/.var/app/$app_id" 2>/dev/null
-        if command -v flatpak >/dev/null 2>&1; then
-            flatpak uninstall --user -y "$app_id" >/dev/null 2>&1
-        fi
-    fi
-    update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
-}
+chmod +x "$TMP_BUILD/AppRun"
 
-if [ -f "$1" ] && [ -z "$2" ]; then
-    file_path=$(readlink -f "$1")
-    file_ext="${file_path##*.}"
-    app_name=$(basename "$file_path" ."$file_ext")
-    case "${file_ext,,}" in
-        deb|gz|tgz)
-            if command -v linapp-installer >/dev/null 2>&1; then
-                exec linapp-installer "$file_path"
-            else
-                echo "Error: linapp-installer backend not found" >&2
-                exit 1
-            fi
-            exit 0
-            ;;
-        appimage)
-            install_appimage "$file_path" "$app_name"
-            exit 0
-            ;;
-        *)
-            echo "Error: Unsupported format" >&2
-            exit 1
-            ;;
-    esac
+LAUNCHER_DIR="$HOME/.local/share/applications"
+mkdir -p "$LAUNCHER_DIR"
+
+if [ -f "$DESKTOP_FILE" ]; then
+    LOCAL_DESKTOP="$TMP_BUILD/${APP_NAME}.desktop"
+    if [ "$(realpath "$DESKTOP_FILE")" != "$(realpath "$LOCAL_DESKTOP")" ]; then
+        cp "$DESKTOP_FILE" "$LOCAL_DESKTOP"
+    fi
+    
+    if [ -n "$LAUNCH_CMD" ]; then
+        sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun@" "$LOCAL_DESKTOP"
+    else
+        sed -i "s@^Exec=.*@Exec=$FINAL_APPS_DIR/$APP_NAME/AppRun %U@" "$LOCAL_DESKTOP"
+    fi
+    
+    sed -i '/^Path=/d' "$LOCAL_DESKTOP"
+    echo "Path=$FINAL_APPS_DIR/$APP_NAME" >> "$LOCAL_DESKTOP"
+    
+    if grep -q "^Terminal=" "$LOCAL_DESKTOP"; then
+        sed -i "s@^Terminal=.*@Terminal=false@" "$LOCAL_DESKTOP"
+    else
+        echo "Terminal=false" >> "$LOCAL_DESKTOP"
+    fi
+    
+    ICON_PATH=$(find . -name "${APP_NAME}.png" -o -name "google-chrome.png" -o -name "discord.png" -o -name "icon.png" -o -name "*.png" | head -n 1 || true)
+    if [ -n "$ICON_PATH" ]; then
+        CLEAN_ICON_PATH=$(echo "$ICON_PATH" | sed 's|^\./||')
+        sed -i "s@^Icon=.*@Icon=$FINAL_APPS_DIR/$APP_NAME/$CLEAN_ICON_PATH@" "$LOCAL_DESKTOP"
+    fi
+    ln -sf "$FINAL_APPS_DIR/$APP_NAME/${APP_NAME}.desktop" "$LAUNCHER_DIR/${APP_NAME}.desktop"
 fi
 
-case "$1" in
-    --install-flatpak)
-        install_flatpak "$2" "$3"
-        ;;
-    --remove)
-        remove_app "$2" "$3"
-        ;;
-    *)
-        show_help
-        exit 1
-        ;;
-esac
-exit 0
+EJECT_SCRIPT="$DMG_VOLUME/Eject_Installer.sh"
+cat <<EOF > "$EJECT_SCRIPT"
+#!/bin/bash
+pkill -f "dolphin $DMG_VOLUME" || true
+rm -rf "$DMG_VOLUME"
+update-desktop-database "\$HOME/.local/share/applications" 2>/dev/null || true
+kbuildsycoca6 2>/dev/null || kbuildsycoca5 2>/dev/null || true
+EOF
+chmod +x "$EJECT_SCRIPT"
+
+mkdir -p "$DMG_VOLUME/${APP_NAME}"
+cp -a "$TMP_BUILD/." "$DMG_VOLUME/${APP_NAME}/"
+ln -sf "$FINAL_APPS_DIR" "$DMG_VOLUME/Applications"
+
+notify-send "linapp" "Build complete. Drag the app to Applications." --icon=dialog-information
+pkill -f "dolphin $DMG_VOLUME" || true
+sleep 0.5
+dolphin "$DMG_VOLUME" &
