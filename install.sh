@@ -1,73 +1,18 @@
 #!/bin/bash
 
-BIN_DIR="$HOME/.local/bin"
-DESKTOP_DIR="$HOME/.local/share/applications"
-MIME_DIR="$HOME/.local/share/mime/packages"
-MIME_CONFIG="$HOME/.config/mimeapps.list"
+rm -f $HOME/.local/share/applications/linapp-installer.desktop
+rm -f $HOME/.local/bin/linapp-installer
+rm -f $HOME/.local/bin/linapp.png
 
-mkdir -p "$BIN_DIR" "$DESKTOP_DIR" "$MIME_DIR"
+cp ./linapp-installer.desktop $HOME/.local/share/applications/
+cp ./bin/linapp-installer $HOME/.local/bin/
+cp ./linapp.png $HOME/.local/bin/
 
-if [ -f "bin/linapp" ]; then
-    cp "bin/linapp" "$BIN_DIR/linapp"
-    chmod +x "$BIN_DIR/linapp"
-fi
+sed -i 's/Exec=.\/bin\/linapp-installer %f/Exec=\/home\/'$USER'\/.local\/bin\/linapp-installer %f/g' $HOME/.local/share/applications/linapp-installer.desktop
+sed -i 's/Icon=.\/linapp.png/Icon=\/home\/'$USER'\/.local\/bin\/linapp.png/g' $HOME/.local/share/applications/linapp-installer.desktop
 
-if [ -f "bin/linapp-installer" ]; then
-    cp "bin/linapp-installer" "$BIN_DIR/linapp-installer"
-    chmod +x "$BIN_DIR/linapp-installer"
-fi
+chmod +x $HOME/.local/share/applications/linapp-installer.desktop
+chmod +x $HOME/.local/bin/linapp-installer
 
-if [ -f "linapp-installer.desktop" ]; then
-    cp "linapp-installer.desktop" "$DESKTOP_DIR/linapp-installer.desktop"
-    sed -i "s|Exec=./bin/linapp-installer %f|Exec=$BIN_DIR/linapp-installer %f|g" "$DESKTOP_DIR/linapp-installer.desktop"
-    sed -i "s|Icon=./linapp.png|Icon=$BIN_DIR/linapp.png|g" "$DESKTOP_DIR/linapp-installer.desktop"
-    chmod +x "$DESKTOP_DIR/linapp-installer.desktop"
-fi
-
-cat << EOF > "$DESKTOP_DIR/linapp-handler.desktop"
-[Desktop Entry]
-Type=Application
-Name=Linapp Package Handler
-Exec=$BIN_DIR/linapp %f
-MimeType=application/vnd.debian.binary-package;application/x-compressed-tar;application/x-gtar;application/x-tgz;application/x-appimage;
-NoDisplay=true
-Terminal=false
-EOF
-chmod +x "$DESKTOP_DIR/linapp-handler.desktop"
-
-cat << 'EOF' > "$MIME_DIR/linapp-custom.xml"
-<?xml version="1.0" encoding="utf-8"?>
-<mime-info xmlns="http://freedesktop.org">
-    <mime-type type="application/x-appimage">
-        <comment>AppImage Application</comment>
-        <glob pattern="*.AppImage"/>
-        <glob pattern="*.appimage"/>
-    </mime-type>
-</mime-info>
-EOF
-
-update-mime-database "$HOME/.local/share/mime" >/dev/null 2>&1
-
-touch "$MIME_CONFIG"
-if ! grep -q "\[Default Applications\]" "$MIME_CONFIG"; then
-    echo -e "\n[Default Applications]" >> "$MIME_CONFIG"
-fi
-
-MIME_TYPES=(
-    "application/vnd.debian.binary-package"
-    "application/x-compressed-tar"
-    "application/x-gtar"
-    "application/x-tgz"
-    "application/x-appimage"
-)
-
-for mime in "${MIME_TYPES[@]}"; do
-    if grep -q "^${mime}=" "$MIME_CONFIG"; then
-        grep -v "^${mime}=" "$MIME_CONFIG" > "${MIME_CONFIG}.tmp"
-        mv "${MIME_CONFIG}.tmp" "$MIME_CONFIG"
-    fi
-    sed -i "/\[Default Applications\]/a ${mime}=linapp-handler.desktop" "$MIME_CONFIG"
-done
-
-update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
-exit 0
+update-desktop-database $HOME/.local/share/applications/
+kbuildsycoca6 --noincremental
