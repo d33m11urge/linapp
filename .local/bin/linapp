@@ -5,84 +5,63 @@ DESKTOP_DIR="$HOME/.local/share/applications"
 FLATPAK_REMOTES_URL="https://flathub.org"
 
 show_help() {
-    cat << EOF
+    cat << 'INNER'
 Usage: linapp [OPTION] [ARGUMENTS]
 
 Options:
   --install-flatpak <app_id> <name>    Isolate and manage a Flatpak application
   --remove <name> [app_id]             Completely remove an application
   --help                               Show this help message
-EOF
+INNER
 }
 
 install_flatpak() {
     local app_id="$1"
     local app_name="$2"
-
     if [ -z "$app_id" ] || [ -z "$app_name" ]; then
         echo "Error: Missing arguments (app_id app_name)" >&2
         return 1
     fi
-
     if ! command -v flatpak >/dev/null 2>&1; then
         echo "Error: flatpak execution binary not found" >&2
         return 1
     fi
-
     local target_dir="$APPS_DIR/$app_name"
     local desktop_file="$DESKTOP_DIR/${app_id,,}.desktop"
     local flatpak_dir="$HOME/.var/app/$app_id"
-
     mkdir -p "$target_dir/bin" "$target_dir/sandbox_home"
-
     if [ -d "$flatpak_dir" ] && [ ! -L "$flatpak_dir" ]; then
         cp -r "$flatpak_dir"/. "$target_dir/sandbox_home/" 2>/dev/null
         rm -rf "$flatpak_dir"
     fi
-
     flatpak remote-add --user --no-gpg-verify --if-not-exists flathub "$FLATPAK_REMOTES_URL" >/dev/null 2>&1
     flatpak install --user -y flathub "$app_id" >/dev/null 2>&1
-
-    cat << 'EOF' > "$target_dir/bin/launch"
+    cat << 'LAUNCHER' > "$target_dir/bin/launch"
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "$0")")"
 APP_DIR="$(dirname "$HERE")"
 SANDBOX_HOME="$APP_DIR/sandbox_home"
-
 APP_ID="TOKEN_APP_ID"
 FLATPAK_DIR="$HOME/.var/app/$APP_ID"
-
 if [ ! -L "$FLATPAK_DIR" ]; then
     rm -rf "$FLATPAK_DIR" 2>/dev/null
     ln -s "$SANDBOX_HOME" "$FLATPAK_DIR"
 fi
-
-flatpak run \
-  --user \
-  --device=all \
-  --socket=wayland \
-  --socket=x11 \
-  --socket=pulseaudio \
-  "$APP_ID" "$@"
-
+flatpak run --user --device=all --socket=wayland --socket=x11 --socket=pulseaudio "$APP_ID" "$@"
 rm -f "$FLATPAK_DIR" 2>/dev/null
-EOF
-
+LAUNCHER
     sed -i "s|TOKEN_APP_ID|$app_id|g" "$target_dir/bin/launch"
     chmod +x "$target_dir/bin/launch"
-
     local flatpak_src="$HOME/.local/share/flatpak/app/$app_id/current/active/files"
     local icon_path
     icon_path=$(find "$flatpak_src/share/icons" -name "${app_id}.svg" -o -name "${app_id}.png" 2>/dev/null | head -n 1)
-
     local final_icon="application-x-executable"
     if [ -n "$icon_path" ]; then
         mkdir -p "$target_dir/share"
         cp "$icon_path" "$target_dir/share/icon${icon_path##*.}"
         final_icon="$target_dir/share/icon${icon_path##*.}"
     fi
-
-    cat << EOF > "$desktop_file"
+    cat << DESKTOP > "$desktop_file"
 [Desktop Entry]
 Name=$app_name
 Exec=$target_dir/bin/launch
@@ -90,8 +69,7 @@ Icon=$final_icon
 Terminal=false
 Type=Application
 Categories=Utility;
-EOF
-
+DESKTOP
     chmod +x "$desktop_file"
     update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
 }
@@ -100,12 +78,10 @@ install_appimage() {
     local file_path="$1"
     local app_name="$2"
     local target_dir="$APPS_DIR/$app_name"
-
     mkdir -p "$target_dir/bin"
     cp "$file_path" "$target_dir/bin/$app_name.AppImage"
     chmod +x "$target_dir/bin/$app_name.AppImage"
-
-    cat << EOF > "$DESKTOP_DIR/${app_name,,}.desktop"
+    cat << DESKTOP > "$DESKTOP_DIR/${app_name,,}.desktop"
 [Desktop Entry]
 Name=$app_name
 Exec=$target_dir/bin/$app_name.AppImage
@@ -113,7 +89,7 @@ Icon=application-x-executable
 Terminal=false
 Type=Application
 Categories=Utility;
-EOF
+DESKTOP
     chmod +x "$DESKTOP_DIR/${app_name,,}.desktop"
     update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
 }
@@ -121,15 +97,12 @@ EOF
 remove_app() {
     local app_name="$1"
     local app_id="$2"
-
     if [ -z "$app_name" ]; then
         echo "Error: Missing argument (app_name)" >&2
         return 1
     fi
-
     rm -rf "$APPS_DIR/$app_name"
     rm -f "$DESKTOP_DIR/${app_name,,}.desktop"
-
     if [ -n "$app_id" ]; then
         rm -f "$DESKTOP_DIR/${app_id,,}.desktop"
         rm -f "$HOME/.var/app/$app_id" 2>/dev/null
@@ -137,16 +110,13 @@ remove_app() {
             flatpak uninstall --user -y "$app_id" >/dev/null 2>&1
         fi
     fi
-
     update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
 }
 
-# GUI Router
 if [ -f "$1" ] && [ -z "$2" ]; then
     file_path=$(readlink -f "$1")
     file_ext="${file_path##*.}"
     app_name=$(basename "$file_path" ."$file_ext")
-
     case "${file_ext,,}" in
         deb|gz|tgz)
             if command -v linapp-installer >/dev/null 2>&1; then
@@ -168,7 +138,6 @@ if [ -f "$1" ] && [ -z "$2" ]; then
     esac
 fi
 
-# CLI Interface
 case "$1" in
     --install-flatpak)
         install_flatpak "$2" "$3"
@@ -181,5 +150,4 @@ case "$1" in
         exit 1
         ;;
 esac
-
 exit 0
