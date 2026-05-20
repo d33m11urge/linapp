@@ -1,33 +1,48 @@
-#!/bin/bash
-set -e
+MIME_DIR="$HOME/.local/share/mime/packages"
+DESKTOP_DIR="$HOME/.local/share/applications"
+mkdir -p "$MIME_DIR" "$DESKTOP_DIR"
 
-BIN="$HOME/.local/bin"
-APP="$HOME/.local/share/applications"
-
-echo "Installing linapp..."
-mkdir -p "$BIN" "$APP" "$HOME/Applications"
-
-if [ -f "linapp" ]; then
-    cp linapp "$BIN/linapp"
-elif [ -f ".local/bin/linapp" ]; then
-    cp .local/bin/linapp "$BIN/linapp"
-else
-    echo "Error: linapp source file not found!"
-    exit 1
-fi
-
-chmod +x "$BIN/linapp"
-
-cat <<EOF > "$APP/linapp-handler.desktop"
+cat << EOF > "$DESKTOP_DIR/linapp-handler.desktop"
 [Desktop Entry]
 Type=Application
-Name=Linapp Installer
-Exec=$BIN/linapp %f
-MimeType=application/vnd.debian.binary-package;application/gzip;application/x-compressed-tar;application/x-xz;application/x-zstd;application/x-bzip2;
+Name=Linapp Package Installer
+Exec=linapp %f
+MimeType=application/vnd.debian.binary-package;application/x-compressed-tar;application/x-gtar;application/x-appimage;
+NoDisplay=true
 Terminal=false
-Icon=system-run
-Categories=Utility;System;
+EOF
+chmod +x "$DESKTOP_DIR/linapp-handler.desktop"
+
+cat << 'EOF' > "$MIME_DIR/linapp-custom.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<mime-info xmlns="http://freedesktop.org">
+    <mime-type type="application/x-appimage">
+        <comment>AppImage Application</comment>
+        <glob pattern="*.AppImage"/>
+        <glob pattern="*.appimage"/>
+    </mime-type>
+</mime-info>
 EOF
 
-update-desktop-database "$APP"
-echo "Done. linapp is ready."
+update-mime-database "$HOME/.local/share/mime" >/dev/null 2>&1
+
+MIME_CONFIG="$HOME/.config/mimeapps.list"
+touch "$MIME_CONFIG"
+if ! grep -q "\[Default Applications\]" "$MIME_CONFIG"; then
+    echo -e "\n[Default Applications]" >> "$MIME_CONFIG"
+fi
+
+MIME_TYPES=(
+    "application/vnd.debian.binary-package"
+    "application/x-compressed-tar"
+    "application/x-gtar"
+    "application/x-tgz"
+    "application/x-appimage"
+)
+
+for mime in "${MIME_TYPES[@]}"; do
+    sed -i "/^${mime}=/d" "$MIME_CONFIG"
+    sed -i "/\[Default Applications\]/a ${mime}=linapp-handler.desktop" "$MIME_CONFIG"
+done
+
+update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1
