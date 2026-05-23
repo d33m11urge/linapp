@@ -1,66 +1,60 @@
 #!/bin/bash
 
-# Останавливаем скрипт при любой критической ошибке
 set -e
 
 clear
 echo "========================================="
-echo "       Linapp Deployment Script          "
+echo "       Linapp System Installer           "
 echo "========================================="
 echo ""
 
-# 1. Проверяем наличие папки с исполняемыми файлами в репозитории
+# Checking repository integrity
 if [ ! -d ".local/bin" ]; then
-    echo "Error: Directory '.local/bin' not found in the current folder."
-    echo "Make sure you ran the script from the cloned repository root."
+    echo "Error: Directory '.local/bin' not found."
+    echo "Please run this script from the root of the cloned repository."
     exit 1
 fi
 
-# 2. Создаем необходимую структуру папок в домашней директории пользователя
-INSTALL_DIR="$HOME/.local/bin"
+# Defining system deployment targets
+BIN_DIR="$HOME/.local/bin"
 XDG_APPS_DIR="$HOME/.local/share/applications"
-APPLICATIONS_FOLDER="$HOME/Applications"
+APPS_DIR="$HOME/Applications"
 
-echo "-> Creating directory architecture..."
-mkdir -p "$INSTALL_DIR"
+echo "-> Creating local environment folders..."
+mkdir -p "$BIN_DIR"
 mkdir -p "$XDG_APPS_DIR"
-mkdir -p "$APPLICATIONS_FOLDER"
+mkdir -p "$APPS_DIR"
 
-# 3. Копируем исполняемые скрипты linapp в систему
-echo "-> Deploying core scripts to $INSTALL_DIR..."
-cp -r .local/bin/* "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR"/*
+echo "-> Deploying core executable scripts..."
+cp -r .local/bin/* "$BIN_DIR/"
+chmod +x "$BIN_DIR"/*
 
-# 4. Создаем системный .desktop файл для самого Linapp Installer
-echo "-> Generating MIME associations and desktop entries..."
+echo "-> Generating desktop MIME entry..."
 cat << DESKTOP_EOF > "$XDG_APPS_DIR/linapp-installer.desktop"
 [Desktop Entry]
 Name=Linapp Installer
-Exec=$INSTALL_DIR/installer.sh %f
+Exec=$BIN_DIR/installer.sh %f
 MimeType=application/vnd.debian.binary-package;application/gzip;application/x-compressed-tar;
 Terminal=false
 Type=Application
 Icon=system-software-install
 Categories=System;Utility;
-Comment=Deploy macOS-style application containers into ~/Applications
+Comment=Deploy applications to ~/Applications
 DESKTOP_EOF
 
 chmod +x "$XDG_APPS_DIR/linapp-installer.desktop"
 
-# 5. Привязываем форматы файлов .deb и .tar.gz к нашей утилите
-echo "-> Binding .deb and .tar.gz mime-types to linapp..."
+echo "-> Registering .deb and .tar.gz file associations..."
 xdg-mime default linapp-installer.desktop application/vnd.debian.binary-package
 xdg-mime default linapp-installer.desktop application/gzip
 xdg-mime default linapp-installer.desktop application/x-compressed-tar
 
-# 6. Обновляем кэш приложений, чтобы изменения вступили в силу
-echo "-> Refreshing desktop and environment database cache..."
+echo "-> Rebuilding desktop database cache..."
 update-desktop-database "$XDG_APPS_DIR"
 kbuildsycoca6 &> /dev/null || kbuildsycoca5 &> /dev/null || true
 
 echo ""
 echo "========================================="
-echo "  Success! linapp automation deployed.  "
-echo "  Double-click any .deb or .tar.gz file  "
-echo "  to trigger the linapp installer container."
+echo "  Linapp has been successfully installed! "
+echo "  You can now double-click any package.  "
 echo "========================================="
